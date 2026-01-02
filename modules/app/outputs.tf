@@ -29,19 +29,3 @@ output "vpc_id" {
 output "private_subnet_ids" {
   value = aws_subnet.private[*].id
 }
-
-output "frontend_bucket_name" {
-  value = try(aws_s3_bucket.frontend[0].bucket, null)
-}
-
-output "frontend_distribution_id" {
-  value = try(aws_cloudfront_distribution.frontend[0].id, null)
-}
-
-output "frontend_domain_name" {
-  value = try(aws_cloudfront_distribution.frontend[0].domain_name, null)
-}
-
-output "frontend_url" {
-  value = try("https://${aws_cloudfront_distribution.frontend[0].domain_name}", null)
-}

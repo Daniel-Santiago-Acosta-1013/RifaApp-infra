@@ -173,23 +173,3 @@ variable "cors_allow_methods" {
   type    = list(string)
   default = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 }
-
-variable "frontend_enabled" {
-  type    = bool
-  default = true
-}
-
-variable "frontend_bucket_name" {
-  type    = string
-  default = ""
-}
-
-variable "frontend_force_destroy" {
-  type    = bool
-  default = false
-}
-
-variable "frontend_price_class" {
-  type    = string
-  default = "PriceClass_100"
-}

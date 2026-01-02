@@ -14,7 +14,9 @@ Lambda, API Gateway, frontend en S3 + CloudFront, y un bootstrap para el bucket 
 ## Estructura del repo
 - `bootstrap/`: crea el bucket de estado en S3
 - `modules/app/`: stack principal (VPC, RDS, Lambda, API Gateway)
+- `modules/frontend/`: stack del frontend (S3 + CloudFront)
 - `envs/dev/`: variables y Terragrunt del entorno
+- `envs/frontend/`: Terragrunt para frontend (estado separado)
 - `backend.hcl.example`, `root.hcl`: referencia y backend real de Terragrunt
 - `../RifaApp-back/`: codigo del backend (FastAPI) y build de Lambda
 
@@ -74,6 +76,14 @@ terragrunt --working-dir envs/dev plan
 terragrunt --working-dir envs/dev apply
 ```
 
+## Frontend (S3 + CloudFront)
+El frontend se aplica con Terragrunt en `envs/frontend` (estado separado) para evitar
+que el deploy del backend modifique recursos del frontend.
+
+```
+terragrunt --working-dir envs/frontend apply
+```
+
 ## Backend API
 La API FastAPI y su documentacion viven en `../RifaApp-back/README.md`.
 
@@ -89,6 +99,7 @@ La API FastAPI y su documentacion viven en `../RifaApp-back/README.md`.
 ## CI/CD (GitHub Actions)
 Workflow manual en `/.github/workflows/deploy.yml` (solo `workflow_dispatch`), usa Terragrunt.
 Workflow manual en `/.github/workflows/migrate.yml` para ejecutar migraciones via API.
+El deploy del frontend corre desde el repo `RifaApp-front` y aplica Terragrunt en `envs/frontend`.
 
 Configura en GitHub (repo infra):
 - Variables: `BACKEND_REPO` (owner/RifaApp-back), `BACKEND_REF` (opcional), `AWS_REGION`, `API_BASE_PATH` (por defecto `rifaapp`)

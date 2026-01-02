@@ -1,15 +1,13 @@
 data "aws_caller_identity" "current" {}
 
 resource "aws_s3_bucket" "frontend" {
-  count         = var.frontend_enabled ? 1 : 0
   bucket        = local.frontend_bucket_name
   force_destroy = var.frontend_force_destroy
   tags          = local.tags
 }
 
 resource "aws_s3_bucket_ownership_controls" "frontend" {
-  count  = var.frontend_enabled ? 1 : 0
-  bucket = aws_s3_bucket.frontend[0].id
+  bucket = aws_s3_bucket.frontend.id
 
   rule {
     object_ownership = "BucketOwnerEnforced"
@@ -17,8 +15,7 @@ resource "aws_s3_bucket_ownership_controls" "frontend" {
 }
 
 resource "aws_s3_bucket_public_access_block" "frontend" {
-  count  = var.frontend_enabled ? 1 : 0
-  bucket = aws_s3_bucket.frontend[0].id
+  bucket = aws_s3_bucket.frontend.id
 
   block_public_acls       = true
   block_public_policy     = true
@@ -27,8 +24,7 @@ resource "aws_s3_bucket_public_access_block" "frontend" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "frontend" {
-  count  = var.frontend_enabled ? 1 : 0
-  bucket = aws_s3_bucket.frontend[0].id
+  bucket = aws_s3_bucket.frontend.id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -38,7 +34,6 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "frontend" {
 }
 
 resource "aws_cloudfront_origin_access_control" "frontend" {
-  count                             = var.frontend_enabled ? 1 : 0
   name                              = "${local.name_prefix}-frontend-oac"
   description                       = "OAC for ${local.name_prefix} frontend"
   origin_access_control_origin_type = "s3"
@@ -47,15 +42,14 @@ resource "aws_cloudfront_origin_access_control" "frontend" {
 }
 
 resource "aws_cloudfront_distribution" "frontend" {
-  count               = var.frontend_enabled ? 1 : 0
   enabled             = true
   default_root_object = "index.html"
   price_class         = var.frontend_price_class
 
   origin {
-    domain_name              = aws_s3_bucket.frontend[0].bucket_regional_domain_name
+    domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
     origin_id                = "frontend-s3"
-    origin_access_control_id = aws_cloudfront_origin_access_control.frontend[0].id
+    origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
   }
 
   default_cache_behavior {
@@ -97,11 +91,9 @@ resource "aws_cloudfront_distribution" "frontend" {
 }
 
 data "aws_iam_policy_document" "frontend_bucket" {
-  count = var.frontend_enabled ? 1 : 0
-
   statement {
     actions = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.frontend[0].arn}/*"]
+    resources = ["${aws_s3_bucket.frontend.arn}/*"]
 
     principals {
       type        = "Service"
@@ -111,13 +103,12 @@ data "aws_iam_policy_document" "frontend_bucket" {
     condition {
       test     = "StringEquals"
       variable = "AWS:SourceArn"
-      values   = [aws_cloudfront_distribution.frontend[0].arn]
+      values   = [aws_cloudfront_distribution.frontend.arn]
     }
   }
 }
 
 resource "aws_s3_bucket_policy" "frontend" {
-  count  = var.frontend_enabled ? 1 : 0
-  bucket = aws_s3_bucket.frontend[0].id
-  policy = data.aws_iam_policy_document.frontend_bucket[0].json
+  bucket = aws_s3_bucket.frontend.id
+  policy = data.aws_iam_policy_document.frontend_bucket.json
 }
