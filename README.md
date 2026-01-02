@@ -87,7 +87,7 @@ Workflow manual en `/.github/workflows/deploy.yml` (solo `workflow_dispatch`), u
 
 Configura en GitHub (repo infra):
 - Variables: `BACKEND_REPO` (owner/RifaApp-back), `BACKEND_REF` (opcional), `AWS_REGION`, `API_BASE_PATH` (por defecto `rifaapp`)
-- Secrets: `DB_PASSWORD` y credenciales AWS (`AWS_ROLE_ARN` para OIDC o `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`)
+- Secrets: `DB_PASSWORD` y credenciales AWS (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`)
 
 ## Notas
 - `db_password` se guarda en el estado de Terraform.
