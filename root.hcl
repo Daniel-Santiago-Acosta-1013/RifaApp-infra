@@ -19,10 +19,6 @@ remote_state {
   }
 }
 
-terraform {
-  source = "."
-}
-
 inputs = {
   lambda_source_dir = get_env("TF_VAR_lambda_source_dir", local.resolved_lambda_dir)
 }

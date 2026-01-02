@@ -86,4 +86,5 @@ jobs:
       - name: Terragrunt Apply
         env:
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+        working-directory: envs/dev
         run: terragrunt apply -auto-approve

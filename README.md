@@ -12,8 +12,9 @@ Lambda y API Gateway, y un bootstrap para el bucket del estado.
 
 ## Estructura del repo
 - `bootstrap/`: crea el bucket de estado en S3
-- `networking.tf`, `rds.tf`, `lambda.tf`, `api_gateway.tf`: stack principal
-- `backend.hcl.example`, `terraform.tfvars.example`: ejemplos de configuracion
+- `modules/app/`: stack principal (VPC, RDS, Lambda, API Gateway)
+- `envs/dev/`: variables y Terragrunt del entorno
+- `backend.hcl.example`, `root.hcl`: referencia y backend real de Terragrunt
 - `../RifaApp-back/`: codigo del backend (FastAPI) y build de Lambda
 
 ## Requisitos
@@ -40,17 +41,18 @@ export AWS_REGION=us-east-1
 Crear el bucket del estado en S3:
 
 ```
-terragrunt --terragrunt-working-dir bootstrap init
-terragrunt --terragrunt-working-dir bootstrap apply -var="state_bucket_name=rifaapp-terraform-state-745819688993" -var="aws_region=us-east-1"
+terragrunt --working-dir bootstrap init
+terragrunt --working-dir bootstrap apply -var="state_bucket_name=rifaapp-terraform-state-745819688993" -var="aws_region=us-east-1"
 ```
 
 ## Paso 2: configurar backend
-Actualiza `backend.hcl.example` (referencia) y `terragrunt.hcl` (backend real)
+Actualiza `backend.hcl.example` (referencia) y `root.hcl` (backend real)
 con el bucket, key y region del estado.
 
 ## Paso 3: variables del stack principal
-Se creo `terraform.tfvars` desde el ejemplo y contiene `db_password`.
-Este archivo esta en `.gitignore`. Cambia el password si es necesario.
+Si quieres usar archivo local, copia `envs/dev/terraform.tfvars.example` a
+`envs/dev/terraform.tfvars` y agrega `db_password`. Este archivo esta en `.gitignore`.
+Alternativa: exporta `TF_VAR_db_password` en tu shell.
 
 ## Paso 4: desplegar infraestructura
 Antes de aplicar, construye el paquete de la Lambda en el repo del backend:
@@ -67,8 +69,8 @@ export TF_VAR_lambda_source_dir="/ruta/al/lambda_dist"
 ```
 
 ```
-terragrunt plan
-terragrunt apply
+terragrunt --working-dir envs/dev plan
+terragrunt --working-dir envs/dev apply
 ```
 
 ## Backend API
@@ -90,4 +92,4 @@ Configura en GitHub (repo infra):
 ## Notas
 - `db_password` se guarda en el estado de Terraform.
 - `enable_nat_gateway` esta en `false` para reducir costos. Activala si Lambda necesita salida a internet.
-- Para eliminar recursos: `terragrunt destroy` en la raiz. El bucket de estado se elimina aparte en `bootstrap/`.
+- Para eliminar recursos: `terragrunt --working-dir envs/dev destroy`. El bucket de estado se elimina aparte en `bootstrap/`.

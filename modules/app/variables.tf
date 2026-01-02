@@ -117,6 +117,11 @@ variable "lambda_source_dir" {
   type        = string
   default     = ""
   description = "Ruta al directorio con el build de la Lambda (lambda_dist)."
+
+  validation {
+    condition     = var.lambda_source_dir != ""
+    error_message = "lambda_source_dir is required (path to lambda_dist)."
+  }
 }
 
 variable "lambda_memory_size" {
