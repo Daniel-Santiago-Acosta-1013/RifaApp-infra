@@ -5,9 +5,10 @@ locals {
     region = "us-east-1"
   }
 
-  backend_lambda_dir = "${get_repo_root()}/backend/lambda_dist"
-  local_lambda_dir   = "${get_repo_root()}/../RifaApp-back/lambda_dist"
-  resolved_lambda_dir = fileexists(local.backend_lambda_dir) ? local.backend_lambda_dir : local.local_lambda_dir
+  backend_lambda_dir        = "${get_repo_root()}/backend/lambda_dist"
+  local_lambda_dir          = "${get_repo_root()}/../RifaApp-back/lambda_dist"
+  backend_lambda_dir_exists = can(fileset(local.backend_lambda_dir, "*"))
+  resolved_lambda_dir       = local.backend_lambda_dir_exists ? local.backend_lambda_dir : local.local_lambda_dir
 }
 
 remote_state {
