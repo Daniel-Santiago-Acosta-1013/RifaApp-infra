@@ -139,6 +139,11 @@ variable "api_stage_name" {
   default = "v1"
 }
 
+variable "api_base_path" {
+  type    = string
+  default = "rifaapp"
+}
+
 variable "enable_cors" {
   type    = bool
   default = true

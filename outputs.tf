@@ -2,6 +2,10 @@ output "api_url" {
   value = aws_apigatewayv2_stage.main.invoke_url
 }
 
+output "api_base_url" {
+  value = "${aws_apigatewayv2_stage.main.invoke_url}${local.api_base_path}"
+}
+
 output "lambda_function_name" {
   value = aws_lambda_function.api.function_name
 }

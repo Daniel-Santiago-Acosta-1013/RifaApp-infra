@@ -22,13 +22,33 @@ resource "aws_apigatewayv2_integration" "lambda" {
 
 resource "aws_apigatewayv2_route" "root" {
   api_id    = aws_apigatewayv2_api.http.id
-  route_key = "ANY /rifaapp"
+  route_key = "ANY ${local.api_base_path}"
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 
 resource "aws_apigatewayv2_route" "proxy" {
   api_id    = aws_apigatewayv2_api.http.id
-  route_key = "ANY /rifaapp/{proxy+}"
+  route_key = "ANY ${local.api_base_path}/{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+resource "aws_apigatewayv2_route" "explicit" {
+  for_each = toset([
+    "GET ${local.api_base_path}/health",
+    "GET ${local.api_base_path}/version",
+    "GET ${local.api_base_path}/raffles",
+    "POST ${local.api_base_path}/raffles",
+    "GET ${local.api_base_path}/raffles/{raffle_id}",
+    "POST ${local.api_base_path}/raffles/{raffle_id}/draw",
+    "GET ${local.api_base_path}/raffles/{raffle_id}/tickets",
+    "POST ${local.api_base_path}/raffles/{raffle_id}/tickets",
+    "GET ${local.api_base_path}/docs",
+    "GET ${local.api_base_path}/openapi.json",
+    "GET ${local.api_base_path}/redoc",
+  ])
+
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = each.value
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 

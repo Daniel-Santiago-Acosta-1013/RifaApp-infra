@@ -1,4 +1,4 @@
-# RifaApp infra (Terraform)
+# RifaApp infra (Terraform + Terragrunt)
 
 Infraestructura en AWS para RifaApp con Terraform. Incluye red, base de datos Aurora,
 Lambda y API Gateway, y un bootstrap para el bucket del estado.
@@ -18,13 +18,14 @@ Lambda y API Gateway, y un bootstrap para el bucket del estado.
 
 ## Requisitos
 - Terraform >= 1.5
+- Terragrunt >= 0.96
 - AWS CLI configurado
 - Credenciales con permisos para S3, VPC, RDS, Lambda, API Gateway, IAM y CloudWatch Logs
 - Python 3.11 y Poetry (para construir el artefacto de Lambda en `RifaApp-back`)
 
 ## Instalacion local (macOS con Homebrew)
 ```
-brew install awscli terraform poetry
+brew install awscli terraform terragrunt poetry
 ```
 
 ## Configuracion de credenciales
@@ -39,16 +40,13 @@ export AWS_REGION=us-east-1
 Crear el bucket del estado en S3:
 
 ```
-terraform -chdir=bootstrap init
-terraform -chdir=bootstrap apply -var="state_bucket_name=rifaapp-terraform-state-745819688993" -var="aws_region=us-east-1"
+terragrunt --terragrunt-working-dir bootstrap init
+terragrunt --terragrunt-working-dir bootstrap apply -var="state_bucket_name=rifaapp-terraform-state-745819688993" -var="aws_region=us-east-1"
 ```
 
 ## Paso 2: configurar backend
-Actualiza `backend.hcl.example` (bucket, key y region) y ejecuta:
-
-```
-terraform init -backend-config=backend.hcl.example -reconfigure
-```
+Actualiza `backend.hcl.example` (referencia) y `terragrunt.hcl` (backend real)
+con el bucket, key y region del estado.
 
 ## Paso 3: variables del stack principal
 Se creo `terraform.tfvars` desde el ejemplo y contiene `db_password`.
@@ -69,26 +67,27 @@ export TF_VAR_lambda_source_dir="/ruta/al/lambda_dist"
 ```
 
 ```
-terraform plan
-terraform apply
+terragrunt plan
+terragrunt apply
 ```
 
 ## Backend API
 La API FastAPI y su documentacion viven en `../RifaApp-back/README.md`.
 
 ## Outputs principales
-- `api_url`: URL del API Gateway
+- `api_url`: URL del API Gateway (stage)
+- `api_base_url`: URL base del API (incluye `/rifaapp`)
 - `db_cluster_endpoint`: endpoint de escritura del cluster
 - `db_reader_endpoint`: endpoint de lectura
 
 ## CI/CD (GitHub Actions)
-Workflow manual en `/.github/workflows/deploy.yml` (solo `workflow_dispatch`).
+Workflow manual en `/.github/workflows/deploy.yml` (solo `workflow_dispatch`), usa Terragrunt.
 
 Configura en GitHub (repo infra):
-- Variables: `BACKEND_REPO` (owner/RifaApp-back), `BACKEND_REF` (opcional), `AWS_REGION`
+- Variables: `BACKEND_REPO` (owner/RifaApp-back), `BACKEND_REF` (opcional), `AWS_REGION`, `API_BASE_PATH` (por defecto `rifaapp`)
 - Secrets: `DB_PASSWORD` y credenciales AWS (`AWS_ROLE_ARN` para OIDC o `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`)
 
 ## Notas
 - `db_password` se guarda en el estado de Terraform.
 - `enable_nat_gateway` esta en `false` para reducir costos. Activala si Lambda necesita salida a internet.
-- Para eliminar recursos: `terraform destroy` en la raiz. El bucket de estado se elimina aparte en `bootstrap/`.
+- Para eliminar recursos: `terragrunt destroy` en la raiz. El bucket de estado se elimina aparte en `bootstrap/`.

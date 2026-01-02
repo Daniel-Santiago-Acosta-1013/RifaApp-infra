@@ -1,4 +1,6 @@
 .terraform/
+.terragrunt-cache/
+.terragrunt-debug.tfvars.json
 .terraform.lock.hcl
 *.tfstate
 *.tfstate.backup

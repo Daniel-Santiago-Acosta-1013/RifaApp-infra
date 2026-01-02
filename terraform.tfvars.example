@@ -1,4 +1,5 @@
 aws_region   = "us-east-1"
 project_name = "rifaapp"
 environment  = "dev"
+api_base_path = "rifaapp"
 db_password  = "change-me"
