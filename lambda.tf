@@ -1,6 +1,6 @@
 data "archive_file" "lambda" {
   type        = "zip"
-  source_dir  = "${path.module}/lambda"
+  source_dir  = local.lambda_source_dir
   output_path = "${path.module}/lambda.zip"
 }
 
@@ -54,11 +54,12 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      DB_HOST     = aws_rds_cluster.db.endpoint
-      DB_PORT     = tostring(var.db_port)
-      DB_NAME     = var.db_name
-      DB_USER     = var.db_username
-      DB_PASSWORD = var.db_password
+      API_GATEWAY_BASE_PATH = "/${var.api_stage_name}"
+      DB_HOST               = aws_rds_cluster.db.endpoint
+      DB_PORT               = tostring(var.db_port)
+      DB_NAME               = var.db_name
+      DB_USER               = var.db_username
+      DB_PASSWORD           = var.db_password
     }
   }
 

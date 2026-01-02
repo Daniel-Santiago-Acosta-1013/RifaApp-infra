@@ -22,13 +22,13 @@ resource "aws_apigatewayv2_integration" "lambda" {
 
 resource "aws_apigatewayv2_route" "root" {
   api_id    = aws_apigatewayv2_api.http.id
-  route_key = "ANY /"
+  route_key = "ANY /rifaapp"
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 
 resource "aws_apigatewayv2_route" "proxy" {
   api_id    = aws_apigatewayv2_api.http.id
-  route_key = "ANY /{proxy+}"
+  route_key = "ANY /rifaapp/{proxy+}"
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 

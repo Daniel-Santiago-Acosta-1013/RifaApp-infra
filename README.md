@@ -12,18 +12,19 @@ Lambda y API Gateway, y un bootstrap para el bucket del estado.
 
 ## Estructura del repo
 - `bootstrap/`: crea el bucket de estado en S3
-- `lambda/`: handler de ejemplo para la Lambda
 - `networking.tf`, `rds.tf`, `lambda.tf`, `api_gateway.tf`: stack principal
 - `backend.hcl.example`, `terraform.tfvars.example`: ejemplos de configuracion
+- `../RifaApp-back/`: codigo del backend (FastAPI) y build de Lambda
 
 ## Requisitos
 - Terraform >= 1.5
 - AWS CLI configurado
 - Credenciales con permisos para S3, VPC, RDS, Lambda, API Gateway, IAM y CloudWatch Logs
+- Python 3.11 y Poetry (para construir el artefacto de Lambda en `RifaApp-back`)
 
 ## Instalacion local (macOS con Homebrew)
 ```
-brew install awscli terraform
+brew install awscli terraform poetry
 ```
 
 ## Configuracion de credenciales
@@ -54,16 +55,38 @@ Se creo `terraform.tfvars` desde el ejemplo y contiene `db_password`.
 Este archivo esta en `.gitignore`. Cambia el password si es necesario.
 
 ## Paso 4: desplegar infraestructura
+Antes de aplicar, construye el paquete de la Lambda en el repo del backend:
+
+```
+cd ../RifaApp-back
+./scripts/build_lambda.sh
+cd ../RifaApp-infra
+```
+
+Si usas otro path para el build, configura `lambda_source_dir`:
+```
+export TF_VAR_lambda_source_dir="/ruta/al/lambda_dist"
+```
 
 ```
 terraform plan
 terraform apply
 ```
 
+## Backend API
+La API FastAPI y su documentacion viven en `../RifaApp-back/README.md`.
+
 ## Outputs principales
 - `api_url`: URL del API Gateway
 - `db_cluster_endpoint`: endpoint de escritura del cluster
 - `db_reader_endpoint`: endpoint de lectura
+
+## CI/CD (GitHub Actions)
+Workflow manual en `/.github/workflows/deploy.yml` (solo `workflow_dispatch`).
+
+Configura en GitHub (repo infra):
+- Variables: `BACKEND_REPO` (owner/RifaApp-back), `BACKEND_REF` (opcional), `AWS_REGION`
+- Secrets: `DB_PASSWORD` y credenciales AWS (`AWS_ROLE_ARN` para OIDC o `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`)
 
 ## Notas
 - `db_password` se guarda en el estado de Terraform.

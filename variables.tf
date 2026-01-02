@@ -105,12 +105,18 @@ variable "db_apply_immediately" {
 
 variable "lambda_runtime" {
   type    = string
-  default = "nodejs18.x"
+  default = "python3.11"
 }
 
 variable "lambda_handler" {
   type    = string
-  default = "handler.handler"
+  default = "app.main.handler"
+}
+
+variable "lambda_source_dir" {
+  type        = string
+  default     = ""
+  description = "Ruta al directorio con el build de la Lambda (lambda_dist)."
 }
 
 variable "lambda_memory_size" {
