@@ -1,13 +1,14 @@
 # RifaApp infra (Terraform + Terragrunt)
 
 Infraestructura en AWS para RifaApp con Terraform. Incluye red, base de datos Aurora,
-Lambda y API Gateway, y un bootstrap para el bucket del estado.
+Lambda, API Gateway, frontend en S3 + CloudFront, y un bootstrap para el bucket del estado.
 
 ## Alcance
 - VPC con subnets publicas y privadas
 - Aurora (PostgreSQL por defecto)
 - Lambda dentro de la VPC
 - HTTP API Gateway con integracion Lambda
+- S3 + CloudFront para frontend (SPA)
 - Bucket S3 para el estado de Terraform (versionado, cifrado, bloqueo publico)
 
 ## Estructura del repo
@@ -81,9 +82,13 @@ La API FastAPI y su documentacion viven en `../RifaApp-back/README.md`.
 - `api_base_url`: URL base del API (incluye `/rifaapp`)
 - `db_cluster_endpoint`: endpoint de escritura del cluster
 - `db_reader_endpoint`: endpoint de lectura
+- `frontend_bucket_name`: bucket S3 del frontend
+- `frontend_distribution_id`: ID de CloudFront
+- `frontend_url`: URL publica de CloudFront
 
 ## CI/CD (GitHub Actions)
 Workflow manual en `/.github/workflows/deploy.yml` (solo `workflow_dispatch`), usa Terragrunt.
+Workflow manual en `/.github/workflows/migrate.yml` para ejecutar migraciones via API.
 
 Configura en GitHub (repo infra):
 - Variables: `BACKEND_REPO` (owner/RifaApp-back), `BACKEND_REF` (opcional), `AWS_REGION`, `API_BASE_PATH` (por defecto `rifaapp`)

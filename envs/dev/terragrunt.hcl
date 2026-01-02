@@ -18,4 +18,5 @@ inputs = {
   project_name  = "rifaapp"
   environment   = "dev"
   api_base_path = get_env("TF_VAR_api_base_path", "rifaapp")
+  auto_migrate  = true
 }

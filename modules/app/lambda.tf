@@ -55,6 +55,7 @@ resource "aws_lambda_function" "api" {
   environment {
     variables = {
       API_GATEWAY_BASE_PATH = "/${var.api_stage_name}"
+      AUTO_MIGRATE          = var.auto_migrate ? "true" : "false"
       DB_HOST               = aws_rds_cluster.db.endpoint
       DB_PORT               = tostring(var.db_port)
       DB_NAME               = var.db_name

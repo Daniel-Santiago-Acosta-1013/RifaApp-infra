@@ -1,0 +1,84 @@
+name: Run Database Migrations
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TG_NON_INTERACTIVE: "true"
+  API_BASE_URL: ${{ vars.API_BASE_URL }}
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infra
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      - name: Install Terragrunt
+        run: |
+          TERRAGRUNT_VERSION="0.96.1"
+          curl -sSL -o terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_amd64"
+          chmod +x terragrunt
+          sudo mv terragrunt /usr/local/bin/terragrunt
+
+      - name: Resolve API base URL
+        id: api
+        working-directory: envs/dev
+        run: |
+          if [ -n "$API_BASE_URL" ]; then
+            echo "api_base_url=$API_BASE_URL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          terragrunt init
+          terragrunt output -json > /tmp/tg_output.json
+
+          API_BASE_URL=$(python3 - <<'PY'
+          import json
+          import sys
+
+          with open("/tmp/tg_output.json", "r", encoding="utf-8") as handle:
+              data = json.load(handle)
+
+          value = data.get("api_base_url", {}).get("value", "")
+          print(value)
+          PY
+          )
+
+          if [ -z "$API_BASE_URL" ]; then
+            echo "api_base_url output not found." >&2
+            exit 1
+          fi
+
+          echo "api_base_url=$API_BASE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Run migrations
+        env:
+          API_BASE_URL: ${{ steps.api.outputs.api_base_url }}
+        run: |
+          if [ -z "$API_BASE_URL" ]; then
+            echo "API base URL is empty." >&2
+            exit 1
+          fi
+
+          API_BASE_URL="${API_BASE_URL%/}"
+          curl -sS -f -X POST \
+            -H "Accept: application/json" \
+            "$API_BASE_URL/migrations/run"
