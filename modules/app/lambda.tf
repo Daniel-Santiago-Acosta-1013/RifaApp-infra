@@ -61,6 +61,9 @@ resource "aws_lambda_function" "api" {
       DB_NAME               = var.db_name
       DB_USER               = var.db_username
       DB_PASSWORD           = var.db_password
+      CORS_ALLOW_ORIGINS    = join(",", var.cors_allow_origins)
+      CORS_ALLOW_HEADERS    = join(",", var.cors_allow_headers)
+      CORS_ALLOW_METHODS    = join(",", var.cors_allow_methods)
     }
   }
 
