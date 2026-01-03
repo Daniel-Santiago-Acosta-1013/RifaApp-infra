@@ -1,5 +1,9 @@
 data "aws_caller_identity" "current" {}
 
+data "aws_cloudfront_cache_policy" "caching_optimized" {
+  name = "Managed-CachingOptimized"
+}
+
 resource "aws_s3_bucket" "frontend" {
   bucket        = local.frontend_bucket_name
   force_destroy = var.frontend_force_destroy
@@ -58,9 +62,7 @@ resource "aws_cloudfront_distribution" "frontend" {
     target_origin_id       = "frontend-s3"
     viewer_protocol_policy = "redirect-to-https"
     compress               = true
-    min_ttl                = 0
-    default_ttl            = 3600
-    max_ttl                = 86400
+    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
   }
 
   custom_error_response {
