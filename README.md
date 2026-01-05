@@ -25,11 +25,12 @@ Lambda, API Gateway, frontend en S3 + CloudFront, y un bootstrap para el bucket 
 - Terragrunt >= 0.96
 - AWS CLI configurado
 - Credenciales con permisos para S3, VPC, RDS, Lambda, API Gateway, IAM y CloudWatch Logs
-- Python 3.11 y Poetry (para construir el artefacto de Lambda en `RifaApp-back`)
+- Python 3.11 y uv (Astral) (para construir el artefacto de Lambda en `RifaApp-back`)
 
 ## Instalacion local (macOS con Homebrew)
 ```
-brew install awscli terraform terragrunt poetry
+brew install awscli terraform terragrunt
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ## Configuracion de credenciales
