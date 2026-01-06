@@ -26,11 +26,19 @@ Lambda, API Gateway, frontend en S3 + CloudFront, y un bootstrap para el bucket 
 - AWS CLI configurado
 - Credenciales con permisos para S3, VPC, RDS, Lambda, API Gateway, IAM y CloudWatch Logs
 - Python 3.11 y uv (Astral) (para construir el artefacto de Lambda en `RifaApp-back`)
+- Sqitch (para ejecutar migraciones via la API del backend)
 
 ## Instalacion local (macOS con Homebrew)
 ```
-brew install awscli terraform terragrunt
+brew install awscli terraform terragrunt cpanminus libpq
 curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Instala Sqitch (macOS):
+```
+env PATH="/opt/homebrew/opt/libpq/bin:$PATH" cpanm --notest App::Sqitch
+cpanm --local-lib=~/perl5 local::lib
+eval "$(perl -I ~/perl5/lib/perl5 -Mlocal::lib)"
 ```
 
 ## Configuracion de credenciales
@@ -110,3 +118,4 @@ Configura en GitHub (repo infra):
 - `db_password` se guarda en el estado de Terraform.
 - `enable_nat_gateway` esta en `false` para reducir costos. Activala si Lambda necesita salida a internet.
 - Para eliminar recursos: `terragrunt --working-dir envs/dev destroy`. El bucket de estado se elimina aparte en `bootstrap/`.
+- Las migraciones via API requieren `sqitch` disponible en el runtime de la Lambda (PATH o `SQITCH_BIN`).
