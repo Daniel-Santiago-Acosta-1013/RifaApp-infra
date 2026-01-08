@@ -43,6 +43,11 @@ jobs:
             echo "tag_name must follow vX.Y.Z format (example: v1.2.3)" >&2
             exit 1
           fi
+          git fetch --tags
+          if git rev-parse "${{ inputs.tag_name }}" >/dev/null 2>&1; then
+            echo "Tag already exists in infra repo: ${{ inputs.tag_name }}" >&2
+            exit 1
+          fi
 
       - name: Checkout backend
         uses: actions/checkout@v4
