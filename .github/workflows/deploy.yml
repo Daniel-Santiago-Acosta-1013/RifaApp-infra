@@ -101,13 +101,7 @@ jobs:
               "$API_BASE/repos/$REPO/actions/variables/$name")"
 
             if [ "$http_code" = "200" ]; then
-              python3 - <<'PY'
-              import json
-              
-              with open("/tmp/var.json", "r", encoding="utf-8") as handle:
-              data = json.load(handle)
-              print(data.get("value", ""))
-              PY
+              python3 -c 'import json; data=json.load(open("/tmp/var.json","r",encoding="utf-8")); print(data.get("value",""))'
               return 0
             fi
 
@@ -213,12 +207,7 @@ jobs:
               json.dump({"cluster_id": cluster_id}, handle)
           PY
 
-          CLUSTER_ID="$(python3 - <<'PY'
-          import json
-          with open("/tmp/db_meta.json", "r", encoding="utf-8") as handle:
-          print(json.load(handle)["cluster_id"])
-          PY
-          )"
+          CLUSTER_ID="$(python3 -c 'import json; print(json.load(open("/tmp/db_meta.json","r",encoding="utf-8"))["cluster_id"])')"
 
           if [ -z "$CLUSTER_ID" ]; then
             echo "Failed to resolve DB cluster identifier." >&2
@@ -264,41 +253,11 @@ jobs:
               json.dump({"instances": instances}, handle)
           PY
 
-          ENGINE="$(python3 - <<'PY'
-          import json
-          with open("/tmp/cluster_meta.json", "r", encoding="utf-8") as handle:
-          data = json.load(handle)
-          print(data.get("engine", "aurora-postgresql"))
-          PY
-          )"
-          SUBNET_GROUP="$(python3 - <<'PY'
-          import json
-          with open("/tmp/cluster_meta.json", "r", encoding="utf-8") as handle:
-          data = json.load(handle)
-          print(data.get("subnet_group", ""))
-          PY
-          )"
-          PORT="$(python3 - <<'PY'
-          import json
-          with open("/tmp/cluster_meta.json", "r", encoding="utf-8") as handle:
-          data = json.load(handle)
-          print(data.get("port", "5432"))
-          PY
-          )"
-          VPC_SG_IDS="$(python3 - <<'PY'
-          import json
-          with open("/tmp/cluster_meta.json", "r", encoding="utf-8") as handle:
-          data = json.load(handle)
-          print(" ".join(filter(None, data.get("vpc_sg_ids", []))))
-          PY
-          )"
-          INSTANCE_IDS="$(python3 - <<'PY'
-          import json
-          with open("/tmp/instance_meta.json", "r", encoding="utf-8") as handle:
-          data = json.load(handle)
-          print(" ".join([inst["id"] for inst in data.get("instances", []) if inst.get("id")]))
-          PY
-          )"
+          ENGINE="$(python3 -c 'import json; data=json.load(open("/tmp/cluster_meta.json","r",encoding="utf-8")); print(data.get("engine","aurora-postgresql"))')"
+          SUBNET_GROUP="$(python3 -c 'import json; data=json.load(open("/tmp/cluster_meta.json","r",encoding="utf-8")); print(data.get("subnet_group",""))')"
+          PORT="$(python3 -c 'import json; data=json.load(open("/tmp/cluster_meta.json","r",encoding="utf-8")); print(data.get("port","5432"))')"
+          VPC_SG_IDS="$(python3 -c 'import json; data=json.load(open("/tmp/cluster_meta.json","r",encoding="utf-8")); print(\" \".join([v for v in data.get(\"vpc_sg_ids\", []) if v]))')"
+          INSTANCE_IDS="$(python3 -c 'import json; data=json.load(open("/tmp/instance_meta.json","r",encoding="utf-8")); print(\" \".join([inst.get(\"id\",\"\") for inst in data.get(\"instances\", []) if inst.get(\"id\")]))')"
 
           if [ -z "$SUBNET_GROUP" ] || [ -z "$VPC_SG_IDS" ]; then
             echo "Missing subnet group or VPC security groups for cluster restore." >&2
@@ -337,11 +296,11 @@ jobs:
           python3 - <<'PY' > /tmp/instance_list.txt
           import json
           with open("/tmp/instance_meta.json", "r", encoding="utf-8") as handle:
-          data = json.load(handle)
+            data = json.load(handle)
           for inst in data.get("instances", []):
-          if not inst.get("id"):
-          continue
-          print(f"{inst['id']}|{inst.get('class','') or 'db.t3.medium'}|{inst.get('public', False)}")
+            if not inst.get("id"):
+              continue
+            print(f"{inst['id']}|{inst.get('class','') or 'db.t3.medium'}|{inst.get('public', False)}")
           PY
 
           while IFS="|" read -r instance_id instance_class public_access; do

@@ -96,14 +96,7 @@ jobs:
               "$API_BASE/repos/$REPO/actions/variables/$name")"
 
             if [ "$http_code" = "200" ]; then
-              python3 - <<'PY'
-              import json
-              import sys
-              
-              with open("/tmp/var.json", "r", encoding="utf-8") as handle:
-              data = json.load(handle)
-              print(data.get("value", ""))
-              PY
+              python3 -c 'import json; data=json.load(open("/tmp/var.json","r",encoding="utf-8")); print(data.get("value",""))'
               return 0
             fi
 
@@ -182,12 +175,7 @@ jobs:
               json.dump({"cluster_id": cluster_id}, handle)
           PY
 
-          CLUSTER_ID="$(python3 - <<'PY'
-          import json
-          with open("/tmp/db_meta.json", "r", encoding="utf-8") as handle:
-          print(json.load(handle)["cluster_id"])
-          PY
-          )"
+          CLUSTER_ID="$(python3 -c 'import json; print(json.load(open("/tmp/db_meta.json","r",encoding="utf-8"))["cluster_id"])')"
 
           if [ -z "$CLUSTER_ID" ]; then
             echo "Failed to resolve DB cluster identifier." >&2
@@ -211,14 +199,7 @@ jobs:
             local name="$1"
             local value="$2"
             local payload
-            payload="$(VAR_NAME="$name" VAR_VALUE="$value" python3 - <<'PY'
-            import json
-            import os
-            name = os.environ["VAR_NAME"]
-            value = os.environ["VAR_VALUE"]
-            print(json.dumps({"name": name, "value": value}))
-            PY
-            )"
+            payload="$(VAR_NAME="$name" VAR_VALUE="$value" python3 -c 'import json, os; name=os.environ["VAR_NAME"]; value=os.environ["VAR_VALUE"]; print(json.dumps({"name": name, "value": value}))')"
 
             local http_code
             http_code="$(curl -sS -o /tmp/var.json -w "%{http_code}" \
