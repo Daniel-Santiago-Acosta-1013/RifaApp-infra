@@ -146,7 +146,7 @@ variable "auto_migrate" {
 
 variable "api_stage_name" {
   type    = string
-  default = "v1"
+  default = "v2"
 }
 
 variable "api_base_path" {

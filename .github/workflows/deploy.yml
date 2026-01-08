@@ -14,6 +14,7 @@ env:
   TG_NON_INTERACTIVE: "true"
   TF_VAR_lambda_source_dir: ${{ format('{0}/backend/lambda_dist', github.workspace) }}
   TF_VAR_api_base_path: ${{ vars.API_BASE_PATH || 'rifaapp' }}
+  TF_VAR_api_stage_name: ${{ vars.API_STAGE_NAME || 'v2' }}
 
 jobs:
   deploy:
