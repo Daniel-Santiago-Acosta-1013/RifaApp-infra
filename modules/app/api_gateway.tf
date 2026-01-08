@@ -36,15 +36,21 @@ resource "aws_apigatewayv2_route" "explicit" {
   for_each = toset([
     "GET ${local.api_base_path}/health",
     "GET ${local.api_base_path}/version",
-    "GET ${local.api_base_path}/raffles",
-    "POST ${local.api_base_path}/raffles",
-    "GET ${local.api_base_path}/raffles/{raffle_id}",
-    "POST ${local.api_base_path}/raffles/{raffle_id}/draw",
-    "GET ${local.api_base_path}/raffles/{raffle_id}/tickets",
-    "POST ${local.api_base_path}/raffles/{raffle_id}/tickets",
+    "POST ${local.api_base_path}/migrations/run",
+    "POST ${local.api_base_path}/auth/register",
+    "POST ${local.api_base_path}/auth/login",
     "GET ${local.api_base_path}/docs",
     "GET ${local.api_base_path}/openapi.json",
     "GET ${local.api_base_path}/redoc",
+    "GET ${local.api_base_path}/v2/raffles",
+    "POST ${local.api_base_path}/v2/raffles",
+    "GET ${local.api_base_path}/v2/raffles/{raffle_id}",
+    "GET ${local.api_base_path}/v2/raffles/{raffle_id}/numbers",
+    "POST ${local.api_base_path}/v2/raffles/{raffle_id}/reservations",
+    "POST ${local.api_base_path}/v2/raffles/{raffle_id}/confirm",
+    "POST ${local.api_base_path}/v2/raffles/{raffle_id}/release",
+    "POST ${local.api_base_path}/v2/raffles/{raffle_id}/draw",
+    "GET ${local.api_base_path}/v2/participants/{participant_id}/purchases",
   ])
 
   api_id    = aws_apigatewayv2_api.http.id
