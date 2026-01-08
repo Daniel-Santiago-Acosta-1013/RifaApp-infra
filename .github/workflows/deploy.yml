@@ -2,11 +2,6 @@ name: Deploy Infra and Lambda
 
 on:
   workflow_dispatch:
-    inputs:
-      tag_name:
-        description: "Tag a crear despues del deploy (formato: vX.Y.Z)"
-        required: true
-        type: string
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
@@ -25,7 +20,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       id-token: write
     steps:
       - name: Checkout infra
@@ -37,15 +32,6 @@ jobs:
         run: |
           if [ -z "$BACKEND_REPO" ]; then
             echo "BACKEND_REPO is not set. Configure it as a repo variable or input." >&2
-            exit 1
-          fi
-          if ! [[ "${{ inputs.tag_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "tag_name must follow vX.Y.Z format (example: v1.2.3)" >&2
-            exit 1
-          fi
-          git fetch --tags
-          if git rev-parse "${{ inputs.tag_name }}" >/dev/null 2>&1; then
-            echo "Tag already exists in infra repo: ${{ inputs.tag_name }}" >&2
             exit 1
           fi
 
@@ -92,32 +78,3 @@ jobs:
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
         working-directory: envs/dev
         run: terragrunt apply -auto-approve
-
-      - name: Create git tag
-        if: success()
-        env:
-          TAG_NAME: ${{ inputs.tag_name }}
-          TAGGER_EMAIL: ${{ vars.TAGGER_EMAIL }}
-        run: |
-          set -euo pipefail
-          if [ -z "$TAG_NAME" ]; then
-            echo "tag_name input is required." >&2
-            exit 1
-          fi
-          if ! [[ "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "tag_name must follow vX.Y.Z format (example: v1.2.3)" >&2
-            exit 1
-          fi
-          if [ -z "$TAGGER_EMAIL" ]; then
-            echo "TAGGER_EMAIL repo variable is not set." >&2
-            exit 1
-          fi
-          git fetch --tags
-          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
-            echo "Tag already exists in infra repo: $TAG_NAME" >&2
-            exit 1
-          fi
-          git config user.email "$TAGGER_EMAIL"
-          git config user.name "${GITHUB_ACTOR}"
-          git tag -a "$TAG_NAME" -m "Deploy $TAG_NAME"
-          git push origin "$TAG_NAME"
