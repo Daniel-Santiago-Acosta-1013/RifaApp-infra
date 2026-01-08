@@ -2,11 +2,16 @@ name: Deploy Infra and Lambda
 
 on:
   workflow_dispatch:
+    inputs:
+      backend_ref:
+        description: "Ref del backend (branch o tag). Opcional."
+        required: false
+        type: string
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   BACKEND_REPO: ${{ vars.BACKEND_REPO }}
-  BACKEND_REF: ${{ vars.BACKEND_REF || 'main' }}
+  BACKEND_REF: ${{ inputs.backend_ref || vars.BACKEND_REF || 'main' }}
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   TF_IN_AUTOMATION: "true"
@@ -22,6 +27,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      actions: write
     steps:
       - name: Checkout infra
         uses: actions/checkout@v4
@@ -42,6 +48,87 @@ jobs:
           ref: ${{ env.BACKEND_REF }}
           path: backend
 
+      - name: Compute schema hash
+        id: schema
+        working-directory: backend
+        run: |
+          python3 - <<'PY' > /tmp/schema_hash.txt
+          import hashlib
+          from pathlib import Path
+          
+          root = Path(".")
+          plan = root / "sqitch.plan"
+          deploy_dir = root / "sqitch" / "deploy"
+          
+          if not plan.exists():
+            raise SystemExit("sqitch.plan not found for schema hash")
+          if not deploy_dir.exists():
+            raise SystemExit("sqitch/deploy not found for schema hash")
+          
+          h = hashlib.sha256()
+          h.update(plan.read_bytes())
+          for path in sorted(deploy_dir.glob("*.sql")):
+            h.update(path.name.encode("utf-8"))
+            h.update(b"\0")
+            h.update(path.read_bytes())
+          
+          print(h.hexdigest())
+          PY
+
+          SCHEMA_HASH="$(cat /tmp/schema_hash.txt | tr -d '\n')"
+          if [ -z "$SCHEMA_HASH" ]; then
+            echo "Failed to compute schema hash." >&2
+            exit 1
+          fi
+          echo "schema_hash=$SCHEMA_HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch schema metadata
+        id: schema_meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          API_BASE="https://api.github.com"
+          REPO="${GITHUB_REPOSITORY}"
+
+          get_var() {
+            local name="$1"
+            local http_code
+            http_code="$(curl -sS -o /tmp/var.json -w "%{http_code}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$API_BASE/repos/$REPO/actions/variables/$name")"
+
+            if [ "$http_code" = "200" ]; then
+              python3 - <<'PY'
+              import json
+              
+              with open("/tmp/var.json", "r", encoding="utf-8") as handle:
+              data = json.load(handle)
+              print(data.get("value", ""))
+              PY
+              return 0
+            fi
+
+            if [ "$http_code" = "404" ]; then
+              echo ""
+              return 0
+            fi
+
+            echo "Failed to read variable $name (HTTP $http_code)" >&2
+            cat /tmp/var.json >&2 || true
+            exit 1
+          }
+
+          current_hash="$(get_var DB_SCHEMA_HASH)"
+          snapshot_hash="$(get_var DB_SNAPSHOT_HASH)"
+          snapshot_id="$(get_var DB_SNAPSHOT_ID)"
+
+          echo "current_hash=$current_hash" >> "$GITHUB_OUTPUT"
+          echo "snapshot_hash=$snapshot_hash" >> "$GITHUB_OUTPUT"
+          echo "snapshot_id=$snapshot_id" >> "$GITHUB_OUTPUT"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -61,6 +148,230 @@ jobs:
           aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Decide DB restore
+        id: db_restore
+        env:
+          BACKEND_REF: ${{ env.BACKEND_REF }}
+          TARGET_SCHEMA_HASH: ${{ steps.schema.outputs.schema_hash }}
+          CURRENT_SCHEMA_HASH: ${{ steps.schema_meta.outputs.current_hash }}
+          SNAPSHOT_HASH: ${{ steps.schema_meta.outputs.snapshot_hash }}
+          SNAPSHOT_ID: ${{ steps.schema_meta.outputs.snapshot_id }}
+        run: |
+          set -euo pipefail
+          need_restore="false"
+
+          if [[ "$BACKEND_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            if [ -z "$CURRENT_SCHEMA_HASH" ]; then
+              echo "DB schema hash is not set; cannot evaluate rollback compatibility." >&2
+              exit 1
+            fi
+
+            if [ "$TARGET_SCHEMA_HASH" != "$CURRENT_SCHEMA_HASH" ]; then
+              if [ -z "$SNAPSHOT_ID" ] || [ "$SNAPSHOT_HASH" != "$TARGET_SCHEMA_HASH" ]; then
+                echo "No compatible snapshot for target schema hash. Current=$CURRENT_SCHEMA_HASH Target=$TARGET_SCHEMA_HASH SnapshotHash=$SNAPSHOT_HASH" >&2
+                exit 1
+              fi
+              need_restore="true"
+            fi
+          fi
+
+          echo "need_restore=$need_restore" >> "$GITHUB_OUTPUT"
+
+      - name: Restore DB from snapshot
+        if: steps.db_restore.outputs.need_restore == 'true'
+        env:
+          SNAPSHOT_ID: ${{ steps.schema_meta.outputs.snapshot_id }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY' > /tmp/db_meta.json
+          import json
+          from pathlib import Path
+          
+          defaults = {
+              "project_name": "rifaapp",
+              "environment": "dev",
+          }
+          
+          data = dict(defaults)
+          tfvars = Path("envs/dev/terraform.tfvars")
+          if tfvars.exists():
+              for line in tfvars.read_text(encoding="utf-8").splitlines():
+                  line = line.strip()
+                  if not line or line.startswith("#") or "=" not in line:
+                      continue
+                  key, value = line.split("=", 1)
+                  key = key.strip()
+                  value = value.strip().strip('"')
+                  data[key] = value
+          
+          project = data.get("project_name", defaults["project_name"])
+          env = data.get("environment", defaults["environment"])
+          cluster_id = f"{project}-{env}-aurora"
+          
+          with open("/tmp/db_meta.json", "w", encoding="utf-8") as handle:
+              json.dump({"cluster_id": cluster_id}, handle)
+          PY
+
+          CLUSTER_ID="$(python3 - <<'PY'
+          import json
+          with open("/tmp/db_meta.json", "r", encoding="utf-8") as handle:
+          print(json.load(handle)["cluster_id"])
+          PY
+          )"
+
+          if [ -z "$CLUSTER_ID" ]; then
+            echo "Failed to resolve DB cluster identifier." >&2
+            exit 1
+          fi
+
+          if [ -z "$SNAPSHOT_ID" ]; then
+            echo "SNAPSHOT_ID is empty; cannot restore." >&2
+            exit 1
+          fi
+
+          echo "Fetching cluster metadata for $CLUSTER_ID"
+          aws rds describe-db-clusters --db-cluster-identifier "$CLUSTER_ID" > /tmp/cluster.json
+          aws rds describe-db-instances --filters Name=db-cluster-id,Values="$CLUSTER_ID" > /tmp/instances.json
+
+          python3 - <<'PY' > /tmp/cluster_meta.json
+          import json
+          with open("/tmp/cluster.json", "r", encoding="utf-8") as handle:
+              data = json.load(handle)
+          cluster = data["DBClusters"][0]
+          meta = {
+              "subnet_group": cluster.get("DBSubnetGroup"),
+              "vpc_sg_ids": [sg.get("VpcSecurityGroupId") for sg in cluster.get("VpcSecurityGroups", [])],
+              "engine": cluster.get("Engine"),
+              "port": cluster.get("Port"),
+          }
+          with open("/tmp/cluster_meta.json", "w", encoding="utf-8") as handle:
+              json.dump(meta, handle)
+          PY
+
+          python3 - <<'PY' > /tmp/instance_meta.json
+          import json
+          with open("/tmp/instances.json", "r", encoding="utf-8") as handle:
+              data = json.load(handle)
+          instances = []
+          for inst in data.get("DBInstances", []):
+              instances.append({
+                  "id": inst.get("DBInstanceIdentifier"),
+                  "class": inst.get("DBInstanceClass"),
+                  "public": inst.get("PubliclyAccessible", False),
+              })
+          with open("/tmp/instance_meta.json", "w", encoding="utf-8") as handle:
+              json.dump({"instances": instances}, handle)
+          PY
+
+          ENGINE="$(python3 - <<'PY'
+          import json
+          with open("/tmp/cluster_meta.json", "r", encoding="utf-8") as handle:
+          data = json.load(handle)
+          print(data.get("engine", "aurora-postgresql"))
+          PY
+          )"
+          SUBNET_GROUP="$(python3 - <<'PY'
+          import json
+          with open("/tmp/cluster_meta.json", "r", encoding="utf-8") as handle:
+          data = json.load(handle)
+          print(data.get("subnet_group", ""))
+          PY
+          )"
+          PORT="$(python3 - <<'PY'
+          import json
+          with open("/tmp/cluster_meta.json", "r", encoding="utf-8") as handle:
+          data = json.load(handle)
+          print(data.get("port", "5432"))
+          PY
+          )"
+          VPC_SG_IDS="$(python3 - <<'PY'
+          import json
+          with open("/tmp/cluster_meta.json", "r", encoding="utf-8") as handle:
+          data = json.load(handle)
+          print(" ".join(filter(None, data.get("vpc_sg_ids", []))))
+          PY
+          )"
+          INSTANCE_IDS="$(python3 - <<'PY'
+          import json
+          with open("/tmp/instance_meta.json", "r", encoding="utf-8") as handle:
+          data = json.load(handle)
+          print(" ".join([inst["id"] for inst in data.get("instances", []) if inst.get("id")]))
+          PY
+          )"
+
+          if [ -z "$SUBNET_GROUP" ] || [ -z "$VPC_SG_IDS" ]; then
+            echo "Missing subnet group or VPC security groups for cluster restore." >&2
+            exit 1
+          fi
+
+          if [ -z "$INSTANCE_IDS" ]; then
+            echo "No DB instances found for cluster $CLUSTER_ID." >&2
+            exit 1
+          fi
+
+          for instance_id in $INSTANCE_IDS; do
+            echo "Deleting instance $instance_id"
+            aws rds delete-db-instance --db-instance-identifier "$instance_id" --skip-final-snapshot >/dev/null
+          done
+
+          for instance_id in $INSTANCE_IDS; do
+            aws rds wait db-instance-deleted --db-instance-identifier "$instance_id"
+          done
+
+          echo "Deleting cluster $CLUSTER_ID"
+          aws rds delete-db-cluster --db-cluster-identifier "$CLUSTER_ID" --skip-final-snapshot >/dev/null
+          aws rds wait db-cluster-deleted --db-cluster-identifier "$CLUSTER_ID"
+
+          echo "Restoring cluster $CLUSTER_ID from snapshot $SNAPSHOT_ID"
+          aws rds restore-db-cluster-from-snapshot \
+            --db-cluster-identifier "$CLUSTER_ID" \
+            --snapshot-identifier "$SNAPSHOT_ID" \
+            --engine "$ENGINE" \
+            --db-subnet-group-name "$SUBNET_GROUP" \
+            --vpc-security-group-ids $VPC_SG_IDS \
+            --port "$PORT" >/dev/null
+
+          aws rds wait db-cluster-available --db-cluster-identifier "$CLUSTER_ID"
+
+          python3 - <<'PY' > /tmp/instance_list.txt
+          import json
+          with open("/tmp/instance_meta.json", "r", encoding="utf-8") as handle:
+          data = json.load(handle)
+          for inst in data.get("instances", []):
+          if not inst.get("id"):
+          continue
+          print(f"{inst['id']}|{inst.get('class','') or 'db.t3.medium'}|{inst.get('public', False)}")
+          PY
+
+          while IFS="|" read -r instance_id instance_class public_access; do
+            if [ -z "$instance_id" ]; then
+              continue
+            fi
+            echo "Creating instance $instance_id ($instance_class)"
+            if [ "$public_access" = "True" ] || [ "$public_access" = "true" ]; then
+              aws rds create-db-instance \
+                --db-instance-identifier "$instance_id" \
+                --db-cluster-identifier "$CLUSTER_ID" \
+                --engine "$ENGINE" \
+                --db-instance-class "$instance_class" \
+                --publicly-accessible >/dev/null
+            else
+              aws rds create-db-instance \
+                --db-instance-identifier "$instance_id" \
+                --db-cluster-identifier "$CLUSTER_ID" \
+                --engine "$ENGINE" \
+                --db-instance-class "$instance_class" >/dev/null
+            fi
+          done < /tmp/instance_list.txt
+
+          while IFS="|" read -r instance_id _ _; do
+            if [ -z "$instance_id" ]; then
+              continue
+            fi
+            aws rds wait db-instance-available --db-instance-identifier "$instance_id"
+          done < /tmp/instance_list.txt
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -78,3 +389,48 @@ jobs:
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
         working-directory: envs/dev
         run: terragrunt apply -auto-approve
+
+      - name: Persist schema hash after DB restore
+        if: steps.db_restore.outputs.need_restore == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SCHEMA_HASH: ${{ steps.schema.outputs.schema_hash }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TARGET_SCHEMA_HASH" ]; then
+            echo "TARGET_SCHEMA_HASH is empty." >&2
+            exit 1
+          fi
+
+          API_BASE="https://api.github.com"
+          REPO="${GITHUB_REPOSITORY}"
+          payload="$(python3 - <<'PY'
+          import json
+          import os
+          print(json.dumps({"name": "DB_SCHEMA_HASH", "value": os.environ["TARGET_SCHEMA_HASH"]}))
+          PY
+          )"
+
+          http_code="$(curl -sS -o /tmp/var.json -w "%{http_code}" \
+            -X PATCH \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$API_BASE/repos/$REPO/actions/variables/DB_SCHEMA_HASH" \
+            -d "$payload")"
+
+          if [ "$http_code" = "404" ]; then
+            http_code="$(curl -sS -o /tmp/var.json -w "%{http_code}" \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$API_BASE/repos/$REPO/actions/variables" \
+              -d "$payload")"
+          fi
+
+          if [ "$http_code" != "201" ] && [ "$http_code" != "204" ]; then
+            echo "Failed to persist DB_SCHEMA_HASH (HTTP $http_code)" >&2
+            cat /tmp/var.json >&2 || true
+            exit 1
+          fi

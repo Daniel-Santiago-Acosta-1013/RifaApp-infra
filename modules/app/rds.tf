@@ -45,6 +45,7 @@ resource "aws_rds_cluster" "db" {
   database_name           = var.db_name
   master_username         = var.db_username
   master_password         = var.db_password
+  snapshot_identifier     = var.db_snapshot_identifier
   port                    = var.db_port
   vpc_security_group_ids  = [aws_security_group.db.id]
   db_subnet_group_name    = aws_db_subnet_group.db.name

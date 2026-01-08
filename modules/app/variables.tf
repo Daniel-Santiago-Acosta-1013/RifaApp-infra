@@ -83,6 +83,11 @@ variable "db_backup_retention" {
   default = 7
 }
 
+variable "db_snapshot_identifier" {
+  type    = string
+  default = null
+}
+
 variable "db_skip_final_snapshot" {
   type    = bool
   default = true

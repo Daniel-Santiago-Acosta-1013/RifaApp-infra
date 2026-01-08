@@ -2,9 +2,16 @@ name: Run Database Migrations
 
 on:
   workflow_dispatch:
+    inputs:
+      backend_ref:
+        description: "Ref del backend para calcular el schema hash (branch o tag). Opcional."
+        required: false
+        type: string
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  BACKEND_REPO: ${{ vars.BACKEND_REPO }}
+  BACKEND_REF: ${{ inputs.backend_ref || vars.BACKEND_REF || 'main' }}
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   TF_IN_AUTOMATION: "true"
@@ -15,9 +22,108 @@ env:
 jobs:
   migrate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Checkout infra
         uses: actions/checkout@v4
+
+      - name: Validate backend repo
+        run: |
+          if [ -z "$BACKEND_REPO" ]; then
+            echo "BACKEND_REPO is not set. Configure it as a repo variable." >&2
+            exit 1
+          fi
+
+      - name: Checkout backend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.BACKEND_REPO }}
+          ref: ${{ env.BACKEND_REF }}
+          path: backend
+
+      - name: Compute schema hash
+        id: schema
+        working-directory: backend
+        run: |
+          python3 - <<'PY' > /tmp/schema_hash.txt
+          import hashlib
+          from pathlib import Path
+          
+          root = Path(".")
+          plan = root / "sqitch.plan"
+          deploy_dir = root / "sqitch" / "deploy"
+          
+          if not plan.exists():
+            raise SystemExit("sqitch.plan not found for schema hash")
+          if not deploy_dir.exists():
+            raise SystemExit("sqitch/deploy not found for schema hash")
+          
+          h = hashlib.sha256()
+          h.update(plan.read_bytes())
+          for path in sorted(deploy_dir.glob("*.sql")):
+            h.update(path.name.encode("utf-8"))
+            h.update(b"\0")
+            h.update(path.read_bytes())
+          
+          print(h.hexdigest())
+          PY
+
+          SCHEMA_HASH="$(cat /tmp/schema_hash.txt | tr -d '\n')"
+          if [ -z "$SCHEMA_HASH" ]; then
+            echo "Failed to compute schema hash." >&2
+            exit 1
+          fi
+          echo "schema_hash=$SCHEMA_HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch schema metadata
+        id: schema_meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          API_BASE="https://api.github.com"
+          REPO="${GITHUB_REPOSITORY}"
+
+          get_var() {
+            local name="$1"
+            local http_code
+            http_code="$(curl -sS -o /tmp/var.json -w "%{http_code}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$API_BASE/repos/$REPO/actions/variables/$name")"
+
+            if [ "$http_code" = "200" ]; then
+              python3 - <<'PY'
+              import json
+              import sys
+              
+              with open("/tmp/var.json", "r", encoding="utf-8") as handle:
+              data = json.load(handle)
+              print(data.get("value", ""))
+              PY
+              return 0
+            fi
+
+            if [ "$http_code" = "404" ]; then
+              echo ""
+              return 0
+            fi
+
+            echo "Failed to read variable $name (HTTP $http_code)" >&2
+            cat /tmp/var.json >&2 || true
+            exit 1
+          }
+
+          current_hash="$(get_var DB_SCHEMA_HASH)"
+          snapshot_hash="$(get_var DB_SNAPSHOT_HASH)"
+          snapshot_id="$(get_var DB_SNAPSHOT_ID)"
+
+          echo "current_hash=$current_hash" >> "$GITHUB_OUTPUT"
+          echo "snapshot_hash=$snapshot_hash" >> "$GITHUB_OUTPUT"
+          echo "snapshot_id=$snapshot_id" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -25,6 +131,125 @@ jobs:
           aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create pre-migration snapshot when schema changes
+        id: snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SCHEMA_HASH: ${{ steps.schema.outputs.schema_hash }}
+          CURRENT_SCHEMA_HASH: ${{ steps.schema_meta.outputs.current_hash }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$CURRENT_SCHEMA_HASH" ]; then
+            echo "No current schema hash. Skipping snapshot."
+            echo "snapshot_created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$CURRENT_SCHEMA_HASH" = "$TARGET_SCHEMA_HASH" ]; then
+            echo "Schema hash unchanged. Skipping snapshot."
+            echo "snapshot_created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          python3 - <<'PY' > /tmp/db_meta.json
+          import json
+          from pathlib import Path
+          
+          defaults = {
+              "project_name": "rifaapp",
+              "environment": "dev",
+          }
+          
+          data = dict(defaults)
+          tfvars = Path("envs/dev/terraform.tfvars")
+          if tfvars.exists():
+              for line in tfvars.read_text(encoding="utf-8").splitlines():
+                  line = line.strip()
+                  if not line or line.startswith("#") or "=" not in line:
+                      continue
+                  key, value = line.split("=", 1)
+                  key = key.strip()
+                  value = value.strip().strip('"')
+                  data[key] = value
+          
+          project = data.get("project_name", defaults["project_name"])
+          env = data.get("environment", defaults["environment"])
+          cluster_id = f"{project}-{env}-aurora"
+          
+          with open("/tmp/db_meta.json", "w", encoding="utf-8") as handle:
+              json.dump({"cluster_id": cluster_id}, handle)
+          PY
+
+          CLUSTER_ID="$(python3 - <<'PY'
+          import json
+          with open("/tmp/db_meta.json", "r", encoding="utf-8") as handle:
+          print(json.load(handle)["cluster_id"])
+          PY
+          )"
+
+          if [ -z "$CLUSTER_ID" ]; then
+            echo "Failed to resolve DB cluster identifier." >&2
+            exit 1
+          fi
+
+          SNAPSHOT_ID="${CLUSTER_ID}-pre-migration-$(date -u +%Y%m%d%H%M%S)"
+          echo "Creating snapshot $SNAPSHOT_ID for cluster $CLUSTER_ID"
+
+          aws rds create-db-cluster-snapshot \
+            --db-cluster-identifier "$CLUSTER_ID" \
+            --db-cluster-snapshot-identifier "$SNAPSHOT_ID" >/dev/null
+
+          aws rds wait db-cluster-snapshot-available \
+            --db-cluster-snapshot-identifier "$SNAPSHOT_ID"
+
+          API_BASE="https://api.github.com"
+          REPO="${GITHUB_REPOSITORY}"
+
+          upsert_var() {
+            local name="$1"
+            local value="$2"
+            local payload
+            payload="$(VAR_NAME="$name" VAR_VALUE="$value" python3 - <<'PY'
+            import json
+            import os
+            name = os.environ["VAR_NAME"]
+            value = os.environ["VAR_VALUE"]
+            print(json.dumps({"name": name, "value": value}))
+            PY
+            )"
+
+            local http_code
+            http_code="$(curl -sS -o /tmp/var.json -w "%{http_code}" \
+              -X PATCH \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$API_BASE/repos/$REPO/actions/variables/$name" \
+              -d "$payload")"
+
+            if [ "$http_code" = "404" ]; then
+              http_code="$(curl -sS -o /tmp/var.json -w "%{http_code}" \
+                -X POST \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "$API_BASE/repos/$REPO/actions/variables" \
+                -d "$payload")"
+            fi
+
+            if [ "$http_code" != "201" ] && [ "$http_code" != "204" ]; then
+              echo "Failed to upsert variable $name (HTTP $http_code)" >&2
+              cat /tmp/var.json >&2 || true
+              exit 1
+            fi
+          }
+
+          upsert_var "DB_SNAPSHOT_ID" "$SNAPSHOT_ID"
+          upsert_var "DB_SNAPSHOT_HASH" "$CURRENT_SCHEMA_HASH"
+          echo "snapshot_created=true" >> "$GITHUB_OUTPUT"
+          echo "snapshot_id=$SNAPSHOT_ID" >> "$GITHUB_OUTPUT"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -53,10 +278,10 @@ jobs:
           API_BASE_URL=$(python3 - <<'PY'
           import json
           import sys
-
+          
           with open("/tmp/tg_output.json", "r", encoding="utf-8") as handle:
               data = json.load(handle)
-
+          
           value = data.get("api_base_url", {}).get("value", "")
           print(value)
           PY
@@ -82,3 +307,68 @@ jobs:
           curl -sS -f -X POST \
             -H "Accept: application/json" \
             "$API_BASE_URL/migrations/run"
+
+      - name: Persist schema hash after migrations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SCHEMA_HASH: ${{ steps.schema.outputs.schema_hash }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TARGET_SCHEMA_HASH" ]; then
+            echo "TARGET_SCHEMA_HASH is empty." >&2
+            exit 1
+          fi
+
+          API_BASE="https://api.github.com"
+          REPO="${GITHUB_REPOSITORY}"
+          payload="$(python3 - <<'PY'
+          import json
+          import os
+          print(json.dumps({"name": "DB_SCHEMA_HASH", "value": os.environ["TARGET_SCHEMA_HASH"]}))
+          PY
+          )"
+
+          http_code="$(curl -sS -o /tmp/var.json -w "%{http_code}" \
+            -X PATCH \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$API_BASE/repos/$REPO/actions/variables/DB_SCHEMA_HASH" \
+            -d "$payload")"
+
+          if [ "$http_code" = "404" ]; then
+            http_code="$(curl -sS -o /tmp/var.json -w "%{http_code}" \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$API_BASE/repos/$REPO/actions/variables" \
+              -d "$payload")"
+          fi
+
+          if [ "$http_code" != "201" ] && [ "$http_code" != "204" ]; then
+            echo "Failed to persist DB_SCHEMA_HASH (HTTP $http_code)" >&2
+            cat /tmp/var.json >&2 || true
+            exit 1
+          fi
+
+      - name: Delete previous snapshot (cost control)
+        if: steps.snapshot.outputs.snapshot_created == 'true'
+        env:
+          OLD_SNAPSHOT_ID: ${{ steps.schema_meta.outputs.snapshot_id }}
+          NEW_SNAPSHOT_ID: ${{ steps.snapshot.outputs.snapshot_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OLD_SNAPSHOT_ID" ]; then
+            echo "No previous snapshot to delete."
+            exit 0
+          fi
+
+          if [ "$OLD_SNAPSHOT_ID" = "$NEW_SNAPSHOT_ID" ]; then
+            echo "Previous snapshot matches new snapshot; nothing to delete."
+            exit 0
+          fi
+
+          echo "Deleting previous snapshot $OLD_SNAPSHOT_ID"
+          aws rds delete-db-cluster-snapshot \
+            --db-cluster-snapshot-identifier "$OLD_SNAPSHOT_ID" >/dev/null
